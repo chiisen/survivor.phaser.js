@@ -71,8 +71,6 @@ export class BootScene extends Phaser.Scene {
     }
 
     create() {
-        // Start game scene
-        this.scene.start('GameScene');
-        this.scene.start('UIScene');
+        this.scene.start('StartScene');
     }
 }

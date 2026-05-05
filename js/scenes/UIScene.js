@@ -10,12 +10,24 @@ export class UIScene extends Phaser.Scene {
         // Stats bar background
         this.statsBg = this.add.graphics();
         this.statsBg.fillStyle(0x1a1a2e, 0.8);
-        this.statsBg.fillRect(10, 10, 220, 80);
+        this.statsBg.fillRect(10, 10, 220, 100);
+
+        // Shield bar (above HP)
+        this.shieldBarBg = this.add.graphics();
+        this.shieldBarBg.fillStyle(0x2c3e50, 1);
+        this.shieldBarBg.fillRect(20, 20, 200, 10);
+
+        this.shieldBar = this.add.graphics();
+        this.shieldText = this.add.text(120, 25, 'Shield: 0 / 50', {
+            fontSize: '8px',
+            fontFamily: 'Arial',
+            color: '#3498db'
+        }).setOrigin(0.5);
 
         // HP bar
         this.hpBarBg = this.add.graphics();
         this.hpBarBg.fillStyle(0x2c3e50, 1);
-        this.hpBarBg.fillRect(20, 20, 200, 20);
+        this.hpBarBg.fillRect(20, 32, 200, 20);
 
         this.hpBar = this.add.graphics();
         this.hpText = this.add.text(120, 30, '100 / 100', {
@@ -132,11 +144,20 @@ export class UIScene extends Phaser.Scene {
     }
 
     updateStats(stats) {
+        // Shield bar
+        if (stats.shieldHp !== undefined) {
+            this.shieldBar.clear();
+            const shieldPercent = Math.max(0, stats.shieldHp / stats.maxShieldHp);
+            this.shieldBar.fillStyle(0x3498db, shieldPercent > 0 ? 1 : 0.3);
+            this.shieldBar.fillRect(20, 20, 200 * shieldPercent, 10);
+            this.shieldText.setText('Shield: ' + Math.floor(stats.shieldHp) + ' / ' + stats.maxShieldHp);
+        }
+
         // HP bar
         this.hpBar.clear();
         const hpPercent = Math.max(0, stats.hp / stats.maxHp);
         this.hpBar.fillStyle(0xe74c3c, 1);
-        this.hpBar.fillRect(20, 20, 200 * hpPercent, 20);
+        this.hpBar.fillRect(20, 32, 200 * hpPercent, 20);
         this.hpText.setText(Math.max(0, Math.floor(stats.hp)) + ' / ' + stats.maxHp);
 
         // EXP bar
@@ -602,5 +623,44 @@ export class UIScene extends Phaser.Scene {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return mins + '分' + secs + '秒';
+    }
+
+    showAchievementNotification(achievement) {
+        const width = this.cameras.main.width;
+        const notification = this.add.container(width / 2, 150);
+
+        const bg = this.add.graphics();
+        bg.fillStyle(0x27ae60, 0.9);
+        bg.fillRoundedRect(-120, -25, 240, 50, 10);
+        notification.add(bg);
+
+        const icon = this.add.text(-100, 0, achievement.icon, {
+            fontSize: '24px'
+        }).setOrigin(0, 0.5);
+        notification.add(icon);
+
+        const text = this.add.text(0, -8, '成就解锁！', {
+            fontSize: '16px',
+            fontFamily: 'Arial',
+            color: '#ffffff',
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+        notification.add(text);
+
+        const name = this.add.text(0, 10, achievement.name, {
+            fontSize: '14px',
+            fontFamily: 'Arial',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        notification.add(name);
+
+        this.tweens.add({
+            targets: notification,
+            y: notification.y - 30,
+            alpha: 0,
+            delay: 2000,
+            duration: 300,
+            onComplete: () => notification.destroy()
+        });
     }
 }

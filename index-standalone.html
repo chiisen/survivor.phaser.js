@@ -651,6 +651,9 @@ class GameScene extends Phaser.Scene {
     }
 
     killEnemy(enemy) {
+        if (!enemy || !enemy.active) return;
+        enemy.active = false;
+
         this.createExplosion(enemy.x, enemy.y);
         this.createExpOrb(enemy.x, enemy.y, enemy.exp);
         this.stats.kills++;
