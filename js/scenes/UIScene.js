@@ -7,10 +7,10 @@ export class UIScene extends Phaser.Scene {
         const width = this.cameras.main.width;
         const height = this.cameras.main.height;
 
-        // Stats bar background
+        // Stats bar background（擴展高度）
         this.statsBg = this.add.graphics();
         this.statsBg.fillStyle(0x1a1a2e, 0.8);
-        this.statsBg.fillRect(10, 10, 220, 100);
+        this.statsBg.fillRect(10, 10, 220, 180);
 
         // Shield bar (above HP)
         this.shieldBarBg = this.add.graphics();
@@ -56,6 +56,18 @@ export class UIScene extends Phaser.Scene {
             fontStyle: 'bold'
         });
 
+        // Skills stats panel（技能數值）
+        this.skillsBg = this.add.graphics();
+        this.skillsBg.fillStyle(0x2c3e50, 0.6);
+        this.skillsBg.fillRect(10, 95, 220, 95);
+
+        this.skillStatsText = this.add.text(20, 100, '', {
+            fontSize: '11px',
+            fontFamily: 'Arial',
+            color: '#ecf0f1',
+            lineSpacing: 4
+        });
+
         // Timer (top right)
         this.timerText = this.add.text(width - 20, 20, '00:00', {
             fontSize: '24px',
@@ -92,6 +104,33 @@ export class UIScene extends Phaser.Scene {
         // Level up panel (hidden by default)
         this.levelUpContainer = this.createLevelUpPanel(width, height);
         this.levelUpContainer.setVisible(false);
+
+        // Boss health bar (top center, hidden by default)
+        this.bossHealthContainer = this.add.container(width / 2, 50);
+        this.bossHealthContainer.setVisible(false);
+        
+        this.bossNameText = this.add.text(0, -20, 'BOSS', {
+            fontSize: '24px',
+            fontFamily: 'Arial',
+            color: '#e74c3c',
+            fontStyle: 'bold'
+        }).setOrigin(0.5);
+        this.bossHealthContainer.add(this.bossNameText);
+        
+        this.bossHealthBg = this.add.graphics();
+        this.bossHealthBg.fillStyle(0x2c3e50, 1);
+        this.bossHealthBg.fillRect(-300, 0, 600, 25);
+        this.bossHealthContainer.add(this.bossHealthBg);
+        
+        this.bossHealthBar = this.add.graphics();
+        this.bossHealthContainer.add(this.bossHealthBar);
+        
+        this.bossHealthText = this.add.text(0, 12, '50 / 50', {
+            fontSize: '16px',
+            fontFamily: 'Arial',
+            color: '#ffffff'
+        }).setOrigin(0.5);
+        this.bossHealthContainer.add(this.bossHealthText);
 
         // Game over screen (hidden by default)
         this.gameOverContainer = this.createGameOverScreen(width, height);
@@ -144,7 +183,8 @@ export class UIScene extends Phaser.Scene {
     }
 
     updateStats(stats) {
-        // Shield bar
+        if (!this.shieldBar) return;
+
         if (stats.shieldHp !== undefined) {
             this.shieldBar.clear();
             const shieldPercent = Math.max(0, stats.shieldHp / stats.maxShieldHp);
@@ -153,7 +193,6 @@ export class UIScene extends Phaser.Scene {
             this.shieldText.setText('Shield: ' + Math.floor(stats.shieldHp) + ' / ' + stats.maxShieldHp);
         }
 
-        // HP bar
         this.hpBar.clear();
         const hpPercent = Math.max(0, stats.hp / stats.maxHp);
         this.hpBar.fillStyle(0xe74c3c, 1);
@@ -169,6 +208,19 @@ export class UIScene extends Phaser.Scene {
 
         // Level
         this.levelText.setText('Lv. ' + stats.level);
+
+        // Skill stats（技能數值）
+        if (stats.skillStats) {
+            const skillLines = [
+                `⚔️ 攻擊力: ${stats.skillStats.damage}`,
+                `🎯 攻擊範圍: ${stats.skillStats.attackRange}`,
+                `⚡ 射速: ${(500 - stats.skillStats.fireRate) / 100 + 5}/s`,
+                `🚀 子彈速度: ${stats.skillStats.projectileSpeed}`,
+                `🧲 拾取範圍: ${stats.skillStats.pickupRange}`,
+                `❤️ 最大HP: ${stats.skillStats.maxHp}`
+            ];
+            this.skillStatsText.setText(skillLines.join('\n'));
+        }
 
         // Timer
         const minutes = Math.floor(stats.gameTime / 60000);
@@ -192,14 +244,14 @@ export class UIScene extends Phaser.Scene {
         this.killsText.setText('擊殺: ' + stats.kills);
     }
 
-    showWaveMessage(text, color) {
+showWaveMessage(text, color) {
         // Clear previous
         this.waveMessageContainer.removeAll(true);
         this.waveMessageContainer.setAlpha(1);
 
         // Background
         const bg = this.add.graphics();
-        bg.fillStyle(color, 0.8);
+        bg.fillStyle(color, 0.9);
         bg.fillRoundedRect(-120, -25, 240, 50, 10);
         this.waveMessageContainer.add(bg);
 
@@ -220,6 +272,25 @@ export class UIScene extends Phaser.Scene {
             delay: 2000,
             duration: 500
         });
+    }
+
+    showBossHealthBar(name) {
+        this.bossNameText.setText(name);
+        this.bossHealthContainer.setVisible(true);
+    }
+
+    hideBossHealthBar() {
+        this.bossHealthContainer.setVisible(false);
+    }
+
+    updateBossHealthBar(current, max) {
+        const percent = current / max;
+        
+        this.bossHealthBar.clear();
+        this.bossHealthBar.fillStyle(0xe74c3c, 1);
+        this.bossHealthBar.fillRect(-300, 0, 600 * percent, 25);
+        
+        this.bossHealthText.setText(`${Math.ceil(current)} / ${max}`);
     }
 
     showBuffNotification(text, duration) {
@@ -464,6 +535,9 @@ export class UIScene extends Phaser.Scene {
             align: 'center'
         }).setOrigin(0.5);
         card.add(desc);
+
+        // Set size for interactive hitArea
+        card.setSize(130, 200);
 
         return card;
     }

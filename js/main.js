@@ -74,11 +74,11 @@ export const GAME_CONSTANTS = {
             shootInterval: 2000
         },
         BOSS: {
-            hp: 50,
+            hp: 100, // 原50，加2倍
             speed: 25,
             damage: 30,
             exp: 100,
-            radius: 35,
+            radius: 105, // 放大3倍（原35 * 3）
             color: 0xc0392b,
             shootInterval: 1500,
             phaseThresholds: [0.7, 0.4, 0.2],
@@ -145,7 +145,7 @@ export const GAME_CONSTANTS = {
     WAVE: {
         DURATION: 60000, // 60 seconds
         REST_TIME: 5000, // 5 seconds
-        BASE_ENEMIES: 10,
+        BASE_ENEMIES: 20, // 增加2倍（原10）
         ENEMY_MULTIPLIER: 1.3,
         BASE_SPAWN_INTERVAL: 1500,
         SPAWN_INTERVAL_DECREASE: 50,
@@ -162,7 +162,7 @@ export const GAME_CONSTANTS = {
         { id: 'fireRate', name: '急速射擊', desc: '射擊間隔 -0.08秒', icon: '⚡', effect: { fireRate: -80 } },
         { id: 'damage', name: '魔力增幅', desc: '傷害 +1', icon: '✨', effect: { damage: 1 } },
         { id: 'projSpeed', name: '子彈加速', desc: '子彈速度 +100', icon: '🚀', effect: { projectileSpeed: 100 } },
-        { id: 'multiShot', name: '多重射擊', desc: '同時發射 +1 顆子彈', icon: '🎯', effect: { projectileCount: 1 } },
+        { id: 'multiShot', name: '多重射擊', desc: '同時發射 +2 顆子彈', icon: '🎯', effect: { projectileCount: 2 } },
         { id: 'critChance', name: '暴击率', desc: '暴击率 +5%', icon: '💥', effect: { critChance: 0.05 } },
         { id: 'critMultiplier', name: '暴击傷害', desc: '暴击傷害 +50%', icon: '💢', effect: { critMultiplier: 0.5 } },
         { id: 'vampire', name: '吸血', desc: '擊殺回復 1HP', icon: '🩸', effect: { vampire: 1 } },

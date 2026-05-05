@@ -29,11 +29,17 @@ export class GameScene extends Phaser.Scene {
         this.spawnTimer = 0;
         this.bossSpawned = false;
         this.hpMultiplier = 1;
+        
+        // 波次敵人計數 - 第一波初始設定
+        this.waveEnemiesTotal = GAME_CONSTANTS.WAVE.BASE_ENEMIES;
+        this.waveEnemiesSpawned = 0;
 
         this.chainKillCount = 0;
         this.chainKillTimer = 0;
         this.hasChainKillBuff = false;
         this.chainKillBuffTimer = 0;
+        
+        this.bossEnemy = null; // Boss 實例引用
 
         this.cursors = null;
         this.wasd = null;
@@ -95,6 +101,13 @@ export class GameScene extends Phaser.Scene {
         this.uiScene = this.scene.get('UIScene');
 
         this.initAudio();
+
+        // 延遲顯示第一波消息（等待 UIScene 初始化完成）
+        this.time.delayedCall(100, () => {
+            if (this.uiScene && this.uiScene.showWaveMessage) {
+                this.uiScene.showWaveMessage('第 1 波開始！', 0xe67e22);
+            }
+        });
 
         this.updateUI();
     }
@@ -194,8 +207,21 @@ export class GameScene extends Phaser.Scene {
             this.particles.push(particle);
         }
 
-        this.visibilityMask = this.add.graphics();
-        this.visibilityMask.setDepth(100);
+        // 迷霧背景（全畫面）
+        this.fogBg = this.add.graphics();
+        this.fogBg.fillStyle(0x000000, 0.6);
+        this.fogBg.fillRect(0, 0, 1280, 720);
+        this.fogBg.setDepth(100);
+        
+        // 圓形遮罩 Graphics（不可見，只用來建立遮罩）
+        this.maskCircle = this.add.graphics();
+        this.maskCircle.fillStyle(0xffffff);
+        this.maskCircle.fillCircle(0, 0, GAME_CONSTANTS.PLAYER.VISIBILITY_RADIUS);
+        this.maskCircle.setVisible(false); // 隱藏遮罩Graphics
+        
+        // 建立遮罩
+        const mask = this.maskCircle.createBitmapMask();
+        this.fogBg.setMask(mask);
     }
 
     createPlayer(width, height) {
@@ -411,19 +437,24 @@ export class GameScene extends Phaser.Scene {
     }
 
     initAudio() {
-        this.audioContext = null;
+        // 先初始化音量變數
         this.masterVolume = 0.5;
         this.sfxVolume = 0.7;
         this.bgmVolume = 0.3;
         this.bgmOscillator = null;
-
-        // Initialize audio context on first user interaction
-        this.input.once('pointerdown', () => {
-            if (!this.audioContext) {
-                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // 初始化 AudioContext
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // 如果 AudioContext 被暫停（某些瀏覽器），等待恢復
+        if (this.audioContext.state === 'suspended') {
+            this.input.once('pointerdown', () => {
+                this.audioContext.resume();
                 this.startBGM();
-}
-        });
+            });
+        } else {
+            this.startBGM();
+        }
     }
 
     updateBossPhase(boss, delta) {
@@ -482,8 +513,6 @@ export class GameScene extends Phaser.Scene {
                 target.strokeCircle(x, y, tween.progress * 100);
             },
             onComplete: () => ring.destroy()
-        });
-    }
         });
     }
 
@@ -654,19 +683,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     updateVisibilityMask() {
-        const width = this.cameras.main.width;
-        const height = this.cameras.main.height;
-        const radius = GAME_CONSTANTS.PLAYER.VISIBILITY_RADIUS;
-
-        this.visibilityMask.clear();
-
-        this.visibilityMask.fillStyle(0x000000, 0.6);
-        this.visibilityMask.fillRect(0, 0, width, height);
-
-        this.visibilityMask.fillStyle(0x000000, 0);
-        this.visibilityMask.beginPath();
-        this.visibilityMask.arc(this.player.x, this.player.y, radius, 0, Math.PI * 2);
-        this.visibilityMask.fillPath();
+        // 更新遮罩圓形位置（跟隨玩家）
+        if (this.maskCircle) {
+            this.maskCircle.setPosition(this.player.x, this.player.y);
+        }
     }
 
     handleInput(dt) {
@@ -879,7 +899,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleWaveSystem(delta) {
-        // Check for wave completion
+        // Check for wave completion (清除制：所有敵人清除後才休息)
         if (!this.isRestTime) {
             // Check if it's time for boss wave (50% of wave duration)
             const isBossWave = this.stats.wave % GAME_CONSTANTS.WAVE.BOSS_WAVE_INTERVAL === 0;
@@ -888,8 +908,9 @@ export class GameScene extends Phaser.Scene {
                 this.bossSpawned = true;
             }
 
-            // Check for wave end
-            if (this.waveTimer >= GAME_CONSTANTS.WAVE.DURATION) {
+            // Check for wave end - 所有敵人清除後才休息
+            const activeEnemies = this.enemies.getChildren().filter(e => e.active);
+            if (activeEnemies.length === 0 && this.waveEnemiesSpawned >= this.waveEnemiesTotal) {
                 this.startRestTime();
             }
         } else {
@@ -899,10 +920,12 @@ export class GameScene extends Phaser.Scene {
             }
         }
 
-        // Spawn enemies
+        // Spawn enemies (生成固定數量)
         this.spawnTimer -= delta;
-        if (this.spawnTimer <= 0 && !this.isRestTime) {
+        if (this.spawnTimer <= 0 && !this.isRestTime && this.waveEnemiesSpawned < this.waveEnemiesTotal) {
             this.spawnEnemy();
+            this.waveEnemiesSpawned++;
+            
             const baseInterval = Math.max(
                 GAME_CONSTANTS.WAVE.MIN_SPAWN_INTERVAL,
                 GAME_CONSTANTS.WAVE.BASE_SPAWN_INTERVAL - (this.stats.wave - 1) * GAME_CONSTANTS.WAVE.SPAWN_INTERVAL_DECREASE
@@ -915,6 +938,9 @@ export class GameScene extends Phaser.Scene {
         this.isRestTime = true;
         this.waveTimer = 0;
 
+        // 吸收所有經驗球
+        this.collectAllExpOrbs();
+
         if (this.player.maxShieldHp > 0 && this.player.shieldHp < this.player.maxShieldHp) {
             this.player.shieldHp = this.player.maxShieldHp;
             this.uiScene.showBuffNotification('🛡️ 護盾已回復', 2000);
@@ -923,11 +949,47 @@ export class GameScene extends Phaser.Scene {
         this.uiScene.showWaveMessage('波次結束！休息時間', 0x2ecc71);
     }
 
+    collectAllExpOrbs() {
+        const orbs = this.expOrbs.getChildren();
+        if (orbs.length === 0) return;
+
+        orbs.forEach(orb => {
+            if (!orb.active) return;
+            
+            // 使用 tween 動畫將經驗球飛向玩家
+            this.tweens.add({
+                targets: orb,
+                x: this.player.x,
+                y: this.player.y,
+                duration: 500,
+                ease: 'Power2',
+                onComplete: () => {
+                    if (orb.active) {
+                        this.collectExp(orb.value);
+                        orb.destroy();
+                    }
+                }
+            });
+        });
+
+        // 播放音效
+        this.time.delayedCall(500, () => {
+            this.playSound('pickup');
+        });
+    }
+
     startNextWave() {
         this.stats.wave++;
         this.isRestTime = false;
         this.waveTimer = 0;
         this.bossSpawned = false;
+
+        // 計算該波敵人數量
+        this.waveEnemiesTotal = Math.floor(
+            GAME_CONSTANTS.WAVE.BASE_ENEMIES * 
+            Math.pow(GAME_CONSTANTS.WAVE.ENEMY_MULTIPLIER, this.stats.wave - 1)
+        );
+        this.waveEnemiesSpawned = 0;
 
         // Update HP multiplier
         if (this.stats.wave % GAME_CONSTANTS.WAVE.HP_INCREASE_WAVE === 1) {
@@ -1000,8 +1062,12 @@ export class GameScene extends Phaser.Scene {
 
         enemy.type = type;
         const diffConfig = this.difficultyManager.applyDifficulty(config);
-        enemy.hp = diffConfig.hp * this.hpMultiplier;
-        enemy.maxHp = diffConfig.hp * this.hpMultiplier;
+        
+        // 等級倍率：每級增加 15%（避免玩家太OP）
+        const levelMultiplier = 1 + (this.stats.level - 1) * 0.15;
+        
+        enemy.hp = diffConfig.hp * this.hpMultiplier * levelMultiplier;
+        enemy.maxHp = diffConfig.hp * this.hpMultiplier * levelMultiplier;
         enemy.speed = typeof config.speed === 'object'
             ? Phaser.Math.Between(config.speed.min, config.speed.max)
             : config.speed;
@@ -1033,6 +1099,10 @@ export class GameScene extends Phaser.Scene {
             enemy.summonCount = config.summonCount;
             enemy.summonTimer = 0;
             enemy.isEnraged = false;
+            
+            // 顯示 Boss 大血條
+            this.uiScene.showBossHealthBar('👹 BOSS');
+            this.bossEnemy = enemy; // 記錄 Boss 實例
         }
 
         // Draw enemy
@@ -1273,6 +1343,8 @@ export class GameScene extends Phaser.Scene {
 
             if (enemy.type === 'BOSS') {
                 this.updateBossPhase(enemy, delta);
+                // 更新 UI Boss 血條
+                this.uiScene.updateBossHealthBar(enemy.hp, enemy.maxHp);
             }
 
             // Update health bar for tank/boss
@@ -1447,11 +1519,21 @@ export class GameScene extends Phaser.Scene {
 
         this.createExplosion(enemy.x, enemy.y);
 
-        this.createExpOrb(enemy.x, enemy.y, enemy.exp);
+        // 隨機生成 1-3 個經驗球
+        const orbCount = Phaser.Math.Between(1, 3);
+        const orbExp = Math.floor(enemy.exp / orbCount);
+        for (let i = 0; i < orbCount; i++) {
+            const offsetX = Phaser.Math.Between(-15, 15);
+            const offsetY = Phaser.Math.Between(-15, 15);
+            this.createExpOrb(enemy.x + offsetX, enemy.y + offsetY, orbExp);
+        }
 
         this.stats.kills++;
         if (enemy.type === 'BOSS') {
             this.stats.bossKills++;
+            // 隱藏 Boss 血條
+            this.uiScene.hideBossHealthBar();
+            this.bossEnemy = null;
         }
 
         if (this.player.vampire > 0) {
@@ -1730,6 +1812,17 @@ export class GameScene extends Phaser.Scene {
         this.stats.exp -= GAME_CONSTANTS.EXP_TO_LEVEL(this.stats.level);
         this.stats.level++;
 
+        // 每次升級自動增益
+        this.player.damage += 1; // 攻擊力 +1
+        
+        // HP +10%（增加最大HP並補滿）
+        const hpIncrease = Math.floor(this.player.maxHp * 0.1);
+        this.player.maxHp += hpIncrease;
+        this.player.hp = this.player.maxHp;
+
+        // 顯示升級增益通知
+        this.uiScene.showBuffNotification('✨ 魔力增幅 +1\n❤️ HP +10%', 2000);
+
         this.isLevelUp = true;
         this.playSound('levelUp');
 
@@ -1943,7 +2036,18 @@ export class GameScene extends Phaser.Scene {
                 kills: this.stats.kills,
                 wave: this.stats.wave,
                 gameTime: this.gameTime,
-                isRestTime: this.isRestTime
+                isRestTime: this.isRestTime,
+                shieldHp: this.player.shieldHp,
+                maxShieldHp: this.player.maxShieldHp,
+                // 技能數值
+                skillStats: {
+                    damage: this.player.damage,
+                    attackRange: this.player.attackRange,
+                    fireRate: this.player.fireRate,
+                    projectileSpeed: this.player.projectileSpeed,
+                    pickupRange: this.player.pickupRange,
+                    maxHp: this.player.maxHp
+                }
             });
         }
     }
