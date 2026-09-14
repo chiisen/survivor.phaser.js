@@ -75,6 +75,13 @@ export class UIScene extends Phaser.Scene {
             color: '#ffffff'
         }).setOrigin(1, 0);
 
+        // Q skill cooldown (below timer)
+        this.skillCooldownText = this.add.text(width - 20, 50, 'Q: 就緒', {
+            fontSize: '16px',
+            fontFamily: 'Arial',
+            color: '#f1c40f'
+        }).setOrigin(1, 0);
+
         // Wave info (bottom left)
         this.waveText = this.add.text(20, height - 40, '波次: 1', {
             fontSize: '18px',
@@ -230,6 +237,18 @@ export class UIScene extends Phaser.Scene {
             seconds.toString().padStart(2, '0')
         );
 
+        // Q skill cooldown
+        if (stats.skillTimer !== undefined && this.skillCooldownText) {
+            if (stats.skillTimer > 0) {
+                const cd = Math.ceil(stats.skillTimer / 1000);
+                this.skillCooldownText.setText('Q: 冷卻 ' + cd + 's');
+                this.skillCooldownText.setColor('#95a5a6');
+            } else {
+                this.skillCooldownText.setText('Q: 就緒 ⚡');
+                this.skillCooldownText.setColor('#f1c40f');
+            }
+        }
+
         // Wave
         let waveText = '波次: ' + stats.wave;
         if (stats.wave % 5 === 0) {
@@ -366,21 +385,55 @@ showWaveMessage(text, color) {
         // Pause panel
         const panel = this.add.graphics();
         panel.fillStyle(0x2c3e50, 0.95);
-        panel.fillRoundedRect(-150, -100, 300, 200, 15);
+        panel.fillRoundedRect(-180, -140, 360, 280, 15);
         panel.lineStyle(3, 0x3498db, 1);
-        panel.strokeRoundedRect(-150, -100, 300, 200, 15);
+        panel.strokeRoundedRect(-180, -140, 360, 280, 15);
         container.add(panel);
 
         // Title
-        const title = this.add.text(0, -60, '遊戲暫停', {
+        const title = this.add.text(0, -100, '遊戲暫停', {
             fontSize: '32px',
             fontFamily: 'Arial Black',
             color: '#ffffff'
         }).setOrigin(0.5);
         container.add(title);
 
+        // Volume controls（主音量/音效/背景）
+        this.volumeLabels = {};
+        const volRows = [
+            { key: 'master', label: '主音量' },
+            { key: 'sfx', label: '音效' },
+            { key: 'bgm', label: '背景' }
+        ];
+        volRows.forEach((row, i) => {
+            const y = -40 + i * 32;
+            const name = this.add.text(-140, y, row.label, {
+                fontSize: '14px', fontFamily: 'Arial', color: '#bdc3c7'
+            }).setOrigin(0, 0.5);
+            container.add(name);
+
+            const minus = this.add.text(-40, y, '  −  ', {
+                fontSize: '14px', fontFamily: 'Arial', color: '#ffffff', backgroundColor: '#34495e'
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            minus.on('pointerdown', () => this.adjustVolume(row.key, -0.1));
+            container.add(minus);
+
+            const val = this.add.text(30, y, '50%', {
+                fontSize: '14px', fontFamily: 'Arial', color: '#f1c40f'
+            }).setOrigin(0.5);
+            container.add(val);
+            this.volumeLabels[row.key] = val;
+
+            const plus = this.add.text(100, y, '  ＋  ', {
+                fontSize: '14px', fontFamily: 'Arial', color: '#ffffff', backgroundColor: '#34495e'
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            plus.on('pointerdown', () => this.adjustVolume(row.key, 0.1));
+            container.add(plus);
+        });
+        this.volumeValues = null; // 顯示時由 showPauseScreen 同步
+
         // Instructions
-        const instructions = this.add.text(0, 20, '按 ESC 或 P 繼續遊戲', {
+        const instructions = this.add.text(0, 68, '按 ESC 或 P 繼續遊戲', {
             fontSize: '16px',
             fontFamily: 'Arial',
             color: '#bdc3c7'
@@ -388,7 +441,7 @@ showWaveMessage(text, color) {
         container.add(instructions);
 
         // Controls info
-        const controls = this.add.text(0, 60, 'WASD / 方向鍵：移動', {
+        const controls = this.add.text(0, 100, 'WASD / 方向鍵：移動　Q：大招', {
             fontSize: '14px',
             fontFamily: 'Arial',
             color: '#95a5a6'
@@ -398,7 +451,22 @@ showWaveMessage(text, color) {
         return container;
     }
 
+    adjustVolume(key, delta) {
+        const gameScene = this.scene.get('GameScene');
+        if (!gameScene || typeof gameScene.adjustVolume !== 'function') return;
+        const v = gameScene.adjustVolume(key, delta);
+        if (this.volumeLabels && this.volumeLabels[key]) {
+            this.volumeLabels[key].setText(Math.round(v * 100) + '%');
+        }
+    }
+
     showPauseScreen() {
+        const gameScene = this.scene.get('GameScene');
+        if (gameScene && this.volumeLabels) {
+            if (this.volumeLabels.master) this.volumeLabels.master.setText(Math.round((gameScene.masterVolume ?? 0.5) * 100) + '%');
+            if (this.volumeLabels.sfx) this.volumeLabels.sfx.setText(Math.round((gameScene.sfxVolume ?? 0.7) * 100) + '%');
+            if (this.volumeLabels.bgm) this.volumeLabels.bgm.setText(Math.round((gameScene.bgmVolume ?? 0.3) * 100) + '%');
+        }
         this.pauseContainer.setVisible(true);
     }
 
@@ -562,14 +630,19 @@ showWaveMessage(text, color) {
         return container;
     }
 
-    showGameOver(stats) {
+    showGameOver(stats, leaderboard = []) {
         this.gameOverContainer.removeAll(true);
         this.gameOverContainer.setVisible(true);
+
+        // 先判定新紀錄再存檔（否則存檔後比對永遠為 false）
+        const isNewLevel = stats.level > (this.savedStats.highestLevel || 0);
+        const isNewWave = stats.wave > (this.savedStats.highestWave || 0);
+        const isNewTime = stats.time > (this.savedStats.longestTime || 0);
 
         // Save stats
         this.saveStats(stats);
 
-        // Re-create panel elements
+        // Re-create panel elements（加寬以容納排行榜）
         const overlay = this.add.graphics();
         overlay.fillStyle(0x000000, 0.85);
         overlay.fillRect(-640, -360, 1280, 720);
@@ -577,31 +650,28 @@ showWaveMessage(text, color) {
 
         const panel = this.add.graphics();
         panel.fillStyle(0x1a1a2e, 0.95);
-        panel.fillRoundedRect(-200, -280, 400, 560, 15);
+        panel.fillRoundedRect(-260, -300, 520, 620, 15);
         panel.lineStyle(3, 0xe74c3c, 1);
-        panel.strokeRoundedRect(-200, -280, 400, 560, 15);
+        panel.strokeRoundedRect(-260, -300, 520, 620, 15);
         this.gameOverContainer.add(panel);
 
         // Title
-        const title = this.add.text(0, -240, '遊戲結束', {
+        const title = this.add.text(0, -260, '遊戲結束', {
             fontSize: '36px',
             fontFamily: 'Arial Black',
             color: '#e74c3c'
         }).setOrigin(0.5);
         this.gameOverContainer.add(title);
 
-        // Current run stats
-        const runTitle = this.add.text(0, -180, '本次成績', {
+        // Current run stats（左欄）
+        const runTitle = this.add.text(-130, -210, '本次成績', {
             fontSize: '20px',
             fontFamily: 'Arial',
             color: '#f1c40f'
         }).setOrigin(0.5);
         this.gameOverContainer.add(runTitle);
 
-        // Check for new records
-        const isNewLevel = stats.level > this.savedStats.highestLevel;
-        const isNewWave = stats.wave > this.savedStats.highestWave;
-        const isNewTime = stats.time > this.savedStats.longestTime;
+        // Check for new records（已於存檔前計算，此處僅使用結果）
 
         const currentStats = [
             { label: '等級', value: stats.level + (isNewLevel ? ' 🏆' : '') },
@@ -612,23 +682,23 @@ showWaveMessage(text, color) {
         ];
 
         currentStats.forEach((stat, index) => {
-            const text = this.add.text(-150, -140 + index * 30, stat.label + ':', {
-                fontSize: '16px',
+            const text = this.add.text(-240, -175 + index * 28, stat.label + ':', {
+                fontSize: '15px',
                 fontFamily: 'Arial',
                 color: '#bdc3c7'
             });
             this.gameOverContainer.add(text);
 
-            const value = this.add.text(150, -140 + index * 30, stat.value.toString(), {
-                fontSize: '16px',
+            const value = this.add.text(-30, -175 + index * 28, stat.value.toString(), {
+                fontSize: '15px',
                 fontFamily: 'Arial',
                 color: '#ffffff'
             }).setOrigin(1, 0);
             this.gameOverContainer.add(value);
         });
 
-        // Historical stats
-        const histTitle = this.add.text(0, 30, '歷史紀錄', {
+        // Historical stats（左欄下方）
+        const histTitle = this.add.text(-130, -20, '歷史紀錄', {
             fontSize: '20px',
             fontFamily: 'Arial',
             color: '#3498db'
@@ -645,28 +715,64 @@ showWaveMessage(text, color) {
         ];
 
         histStats.forEach((stat, index) => {
-            const text = this.add.text(-150, 70 + index * 25, stat.label + ':', {
-                fontSize: '14px',
+            const text = this.add.text(-240, 15 + index * 24, stat.label + ':', {
+                fontSize: '13px',
                 fontFamily: 'Arial',
                 color: '#7f8c8d'
             });
             this.gameOverContainer.add(text);
 
-            const value = this.add.text(150, 70 + index * 25, stat.value.toString(), {
-                fontSize: '14px',
+            const value = this.add.text(-30, 15 + index * 24, stat.value.toString(), {
+                fontSize: '13px',
                 fontFamily: 'Arial',
                 color: '#bdc3c7'
             }).setOrigin(1, 0);
             this.gameOverContainer.add(value);
         });
 
+        // Leaderboard TOP 5（右欄）
+        const lbTitle = this.add.text(140, -210, '🏆 排行榜 TOP 5', {
+            fontSize: '18px',
+            fontFamily: 'Arial',
+            color: '#f1c40f'
+        }).setOrigin(0.5);
+        this.gameOverContainer.add(lbTitle);
+
+        const top5 = (leaderboard || []).slice(0, 5);
+        if (top5.length === 0) {
+            const empty = this.add.text(140, -160, '尚無紀錄', {
+                fontSize: '14px',
+                fontFamily: 'Arial',
+                color: '#7f8c8d'
+            }).setOrigin(0.5);
+            this.gameOverContainer.add(empty);
+        } else {
+            top5.forEach((entry, index) => {
+                const y = -170 + index * 62;
+                const rankColor = index === 0 ? '#f1c40f' : '#bdc3c7';
+                const rank = this.add.text(30, y, (index + 1) + '.', {
+                    fontSize: '16px',
+                    fontFamily: 'Arial Black',
+                    color: rankColor
+                });
+                this.gameOverContainer.add(rank);
+                const detail = this.add.text(55, y, 'Lv.' + entry.level + ' ' + this.formatTime(entry.time) + '\n殺' + entry.kills + ' B' + entry.bossKills + ' W' + entry.wave, {
+                    fontSize: '13px',
+                    fontFamily: 'Arial',
+                    color: '#ecf0f1',
+                    lineSpacing: 2
+                });
+                this.gameOverContainer.add(detail);
+            });
+        }
+
         // Restart button
         const button = this.add.graphics();
         button.fillStyle(0x27ae60, 1);
-        button.fillRoundedRect(-80, 230, 160, 40, 8);
+        button.fillRoundedRect(-80, 260, 160, 40, 8);
         this.gameOverContainer.add(button);
 
-        const buttonText = this.add.text(0, 250, '重新開始', {
+        const buttonText = this.add.text(0, 280, '重新開始', {
             fontSize: '18px',
             fontFamily: 'Arial',
             color: '#ffffff'
@@ -674,20 +780,22 @@ showWaveMessage(text, color) {
         this.gameOverContainer.add(buttonText);
 
         // Make button interactive
-        const hitArea = this.add.rectangle(0, 250, 160, 40, 0x000000, 0);
+        const hitArea = this.add.rectangle(0, 280, 160, 40, 0x000000, 0);
         hitArea.setInteractive({ useHandCursor: true });
         hitArea.on('pointerover', () => {
             button.clear();
             button.fillStyle(0x2ecc71, 1);
-            button.fillRoundedRect(-80, 230, 160, 40, 8);
+            button.fillRoundedRect(-80, 260, 160, 40, 8);
         });
         hitArea.on('pointerout', () => {
             button.clear();
             button.fillStyle(0x27ae60, 1);
-            button.fillRoundedRect(-80, 230, 160, 40, 8);
+            button.fillRoundedRect(-80, 260, 160, 40, 8);
         });
         hitArea.on('pointerdown', () => {
-            this.scene.get('GameScene').scene.restart();
+            const gameScene = this.scene.get('GameScene');
+            const difficulty = gameScene.difficulty || 'normal';
+            gameScene.scene.restart({ difficulty });
             this.scene.restart();
         });
         this.gameOverContainer.add(hitArea);

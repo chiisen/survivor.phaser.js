@@ -516,6 +516,52 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    showBossSpawnEffect(x, y) {
+        const ring = this.add.graphics();
+        this.cameras.main.shake(500, 0.015);
+        this.cameras.main.flash(200, 231, 76, 60);
+        this.tweens.add({
+            targets: ring,
+            radius: 160,
+            alpha: 0,
+            duration: 800,
+            onUpdate: (tween, target) => {
+                target.clear();
+                target.lineStyle(8, 0xe74c3c, 1 - tween.progress);
+                target.strokeCircle(x, y, tween.progress * 160);
+                target.lineStyle(4, 0xf1c40f, 1 - tween.progress);
+                target.strokeCircle(x, y, tween.progress * 110);
+            },
+            onComplete: () => ring.destroy()
+        });
+        this.uiScene.showWaveMessage('⚠ BOSS 出現！', 0xe74c3c);
+        this.playSound('chainKill');
+    }
+
+    showBossDeathEffect(x, y) {
+        for (let i = 0; i < 3; i++) {
+            const delay = i * 120;
+            this.time.delayedCall(delay, () => {
+                this.createExplosion(x + Phaser.Math.Between(-30, 30), y + Phaser.Math.Between(-30, 30));
+            });
+        }
+        const ring = this.add.graphics();
+        this.cameras.main.shake(400, 0.02);
+        this.cameras.main.flash(300, 255, 255, 255);
+        this.tweens.add({
+            targets: ring,
+            radius: 200,
+            alpha: 0,
+            duration: 700,
+            onUpdate: (tween, target) => {
+                target.clear();
+                target.lineStyle(6, 0xf1c40f, 1 - tween.progress);
+                target.strokeCircle(x, y, tween.progress * 200);
+            },
+            onComplete: () => ring.destroy()
+        });
+    }
+
     playSound(type) {
         if (!this.audioContext) return;
 
@@ -621,9 +667,28 @@ export class GameScene extends Phaser.Scene {
 
         this.bgmOscillator.connect(gainNode);
         gainNode.connect(this.audioContext.destination);
+        this.bgmGainNode = gainNode;
 
         lfo.start();
         this.bgmOscillator.start();
+    }
+
+    adjustVolume(key, delta) {
+        const clamp = (v) => Math.min(1, Math.max(0, Math.round((v + delta) * 10) / 10));
+        if (key === 'master') this.masterVolume = clamp(this.masterVolume ?? 0.5);
+        else if (key === 'sfx') this.sfxVolume = clamp(this.sfxVolume ?? 0.7);
+        else if (key === 'bgm') this.bgmVolume = clamp(this.bgmVolume ?? 0.3);
+        if (key === 'master' || key === 'bgm') this.applyBgmVolume();
+        return key === 'master' ? this.masterVolume : key === 'sfx' ? this.sfxVolume : this.bgmVolume;
+    }
+
+    applyBgmVolume() {
+        if (this.bgmGainNode && this.audioContext) {
+            this.bgmGainNode.gain.setValueAtTime(
+                (this.masterVolume ?? 0.5) * (this.bgmVolume ?? 0.3) * 0.1,
+                this.audioContext.currentTime
+            );
+        }
     }
 
     stopBGM() {
@@ -663,6 +728,16 @@ export class GameScene extends Phaser.Scene {
         // Phase 4: Update UI
         this.updateUI();
         this.updateAttackRangeGraphics();
+
+        // 成就即時檢查（存活時間每秒一次）
+        this.achievementCheckTimer = (this.achievementCheckTimer || 0) + delta;
+        if (this.achievementCheckTimer >= 1000) {
+            this.achievementCheckTimer = 0;
+            const timeSec = Math.floor(this.gameTime / 1000);
+            this.achievementManager.check('time', timeSec, this.difficulty);
+            this.achievementManager.check('level', this.stats.level, this.difficulty);
+            this.achievementManager.check('wave', this.stats.wave, this.difficulty);
+        }
     }
 
     updateParticles(delta) {
@@ -1002,6 +1077,8 @@ export class GameScene extends Phaser.Scene {
         } else {
             this.uiScene.showWaveMessage('第 ' + this.stats.wave + ' 波開始！', 0xe67e22);
         }
+
+        this.achievementManager.check('wave', this.stats.wave, this.difficulty);
     }
 
     spawnEnemy() {
@@ -1315,6 +1392,7 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.createEnemy(x, y, 'BOSS');
+        this.showBossSpawnEffect(x, y);
     }
 
     updateEnemies(delta) {
@@ -1363,11 +1441,15 @@ export class GameScene extends Phaser.Scene {
 
     createEnemyProjectile(enemy) {
         if (enemy.type === 'BOSS') {
-            const directions = enemy.phaseDirections || [1];
-            directions.forEach(dirIndex => {
-                const angle = (dirIndex / enemy.phaseDirections[enemy.phase - 1]) * Math.PI * 2;
+            const count = (enemy.phaseDirections && enemy.phaseDirections[enemy.phase - 1]) || 1;
+            const baseAngle = Phaser.Math.Angle.Between(
+                enemy.x, enemy.y,
+                this.player.x, this.player.y
+            );
+            for (let i = 0; i < count; i++) {
+                const angle = baseAngle + (i / count) * Math.PI * 2;
                 this.createSingleEnemyProjectile(enemy, angle);
-            });
+            }
         } else {
             const angle = Phaser.Math.Angle.Between(
                 enemy.x, enemy.y,
@@ -1507,44 +1589,82 @@ export class GameScene extends Phaser.Scene {
 
     killEnemy(enemy) {
         if (!enemy || !enemy.active) return;
-        enemy.active = false;
 
-        if (enemy.type === 'SPLIT') {
-            this.splitEnemy(enemy);
+        // 佇列迭代處理連殺，避免遞迴導致堆疊溢出
+        const chainRange = GAME_CONSTANTS.CHAIN_KILL.RANGE;
+        const queue = [enemy];
+        enemy._chainQueued = true;
+        let totalKilled = 0;
+
+        while (queue.length > 0) {
+            const cur = queue.shift();
+            cur._chainQueued = false;
+            if (!cur || !cur.active) continue;
+            cur.active = false;
+
+            if (cur.type === 'SPLIT') {
+                this.splitEnemy(cur);
+            }
+
+            if (cur.type === 'EXPLOSIVE') {
+                this.explosiveEnemyDeath(cur);
+            }
+
+            this.createExplosion(cur.x, cur.y);
+
+            // 隨機生成 1-3 個經驗球
+            const orbCount = Phaser.Math.Between(1, 3);
+            const orbExp = Math.floor(cur.exp / orbCount);
+            for (let i = 0; i < orbCount; i++) {
+                const offsetX = Phaser.Math.Between(-15, 15);
+                const offsetY = Phaser.Math.Between(-15, 15);
+                this.createExpOrb(cur.x + offsetX, cur.y + offsetY, orbExp);
+            }
+
+            this.stats.kills++;
+            if (cur.type === 'BOSS') {
+                this.stats.bossKills++;
+                this.showBossDeathEffect(cur.x, cur.y);
+                // 隱藏 Boss 血條
+                this.uiScene.hideBossHealthBar();
+                this.bossEnemy = null;
+            }
+
+            if (this.player.vampire > 0) {
+                this.player.hp = Math.min(this.player.hp + this.player.vampire, this.player.maxHp);
+            }
+
+            this.playSound('kill');
+            totalKilled++;
+
+            // 收集範圍內連帶目標（分裂鏈：SPLIT 額外用 80px 範圍觸發同類鏈式分裂）
+            const scanRange = cur.type === 'SPLIT' ? 80 : chainRange;
+            const children = this.enemies.getChildren().slice();
+            for (const other of children) {
+                if (!other || !other.active || other._chainQueued || other === cur) continue;
+                // SPLIT 鏈式分裂只連帶同類，其餘連殺維持原 40px 規則
+                if (cur.type === 'SPLIT' && other.type !== 'SPLIT') continue;
+                const dist = Phaser.Math.Distance.Between(cur.x, cur.y, other.x, other.y);
+                const needRange = (cur.type === 'SPLIT' && other.type === 'SPLIT') ? 80 : chainRange;
+                if (dist < needRange) {
+                    other.hp = 0;
+                    other._chainQueued = true;
+                    queue.push(other);
+                }
+            }
+
+            cur.destroy();
         }
 
-        if (enemy.type === 'EXPLOSIVE') {
-            this.explosiveEnemyDeath(enemy);
+        if (totalKilled > 1) {
+            this.chainKillCount = totalKilled;
+            this.chainKillTimer = 100;
+            this.triggerChainKillBuff(totalKilled);
         }
 
-        this.createExplosion(enemy.x, enemy.y);
-
-        // 隨機生成 1-3 個經驗球
-        const orbCount = Phaser.Math.Between(1, 3);
-        const orbExp = Math.floor(enemy.exp / orbCount);
-        for (let i = 0; i < orbCount; i++) {
-            const offsetX = Phaser.Math.Between(-15, 15);
-            const offsetY = Phaser.Math.Between(-15, 15);
-            this.createExpOrb(enemy.x + offsetX, enemy.y + offsetY, orbExp);
-        }
-
-        this.stats.kills++;
-        if (enemy.type === 'BOSS') {
-            this.stats.bossKills++;
-            // 隱藏 Boss 血條
-            this.uiScene.hideBossHealthBar();
-            this.bossEnemy = null;
-        }
-
-        if (this.player.vampire > 0) {
-            this.player.hp = Math.min(this.player.hp + this.player.vampire, this.player.maxHp);
-        }
-
-        this.checkChainKill(enemy);
-
-        this.playSound('kill');
-
-        enemy.destroy();
+        // 成就即時檢查（擊殺/Boss）
+        this.achievementManager.check('kills', this.stats.kills, this.difficulty);
+        this.achievementManager.check('bossKills', this.stats.bossKills, this.difficulty);
     }
 
     splitEnemy(enemy) {
@@ -1622,34 +1742,8 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
-    checkChainKill(killedEnemy) {
-        // Check for nearby enemies within chain range
-        let chainKills = 0;
-        const chainRange = GAME_CONSTANTS.CHAIN_KILL.RANGE;
-
-        this.enemies.getChildren().forEach(enemy => {
-            if (!enemy.active || enemy === killedEnemy) return;
-
-            const dist = Phaser.Math.Distance.Between(
-                killedEnemy.x, killedEnemy.y,
-                enemy.x, enemy.y
-            );
-
-            if (dist < chainRange) {
-                chainKills++;
-                // Chain kill
-                enemy.hp = 0;
-                this.killEnemy(enemy);
-            }
-        });
-
-        if (chainKills > 0) {
-            this.chainKillCount = chainKills + 1;
-            this.chainKillTimer = 100; // 100ms window to count total
-
-            // Trigger chain kill buff
-            this.triggerChainKillBuff(chainKills + 1);
-        }
+    checkChainKill() {
+        // 已併入 killEnemy() 佇列處理，保留空殼避免舊呼叫造成遞迴
     }
 
     triggerChainKillBuff(count) {
@@ -1811,6 +1905,7 @@ export class GameScene extends Phaser.Scene {
     levelUp() {
         this.stats.exp -= GAME_CONSTANTS.EXP_TO_LEVEL(this.stats.level);
         this.stats.level++;
+        this.achievementManager.check('level', this.stats.level, this.difficulty);
 
         // 每次升級自動增益
         this.player.damage += 1; // 攻擊力 +1
@@ -2003,14 +2098,16 @@ export class GameScene extends Phaser.Scene {
         };
 
         this.storageManager.save(stats);
+        const savedData = this.storageManager.load();
 
         this.achievementManager.check('kills', stats.kills, this.difficulty);
         this.achievementManager.check('bossKills', stats.bossKills, this.difficulty);
         this.achievementManager.check('wave', stats.wave, this.difficulty);
         this.achievementManager.check('level', stats.level, this.difficulty);
         this.achievementManager.check('time', stats.time, this.difficulty);
+        this.achievementManager.check('games', savedData.totalGames, this.difficulty);
 
-        this.uiScene.showGameOver(stats, this.storageManager.load());
+        this.uiScene.showGameOver(stats, savedData.leaderboard || []);
     }
 
     togglePause() {
@@ -2039,6 +2136,7 @@ export class GameScene extends Phaser.Scene {
                 isRestTime: this.isRestTime,
                 shieldHp: this.player.shieldHp,
                 maxShieldHp: this.player.maxShieldHp,
+                skillTimer: this.player.skillTimer,
                 // 技能數值
                 skillStats: {
                     damage: this.player.damage,
