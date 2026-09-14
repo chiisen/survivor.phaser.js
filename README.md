@@ -65,14 +65,31 @@ python -m http.server 8080
 
 ```
 survivor.phaser.js/
-├── index.html          # 遊戲主頁面
+├── index.html          # 遊戲主頁面（唯一入口）
 ├── js/
-│   ├── main.js         # 入口檔案 & 配置
-│   └── scenes/
-│       ├── BootScene.js    # 載入場景
-│       ├── GameScene.js    # 主遊戲場景
-│       └── UIScene.js      # UI 場景
+│   ├── main.js         # 入口 & Phaser 配置（常數轉出口）
+│   ├── constants.js    # 遊戲常數（玩家/敵人/波次/天賦/成就/難度）
+│   ├── scenes/
+│   │   ├── BootScene.js    # 載入場景
+│   │   ├── StartScene.js   # 開始畫面（難度+歷史+排行榜）
+│   │   ├── GameScene.js    # 主遊戲場景
+│   │   └── UIScene.js      # UI 場景（HUD/升級/暫停/結算）
+│   ├── managers/
+│   │   ├── StorageManager.js     # 存檔+排行榜（唯一存檔來源）
+│   │   ├── DifficultyManager.js  # 難度倍率
+│   │   ├── AchievementManager.js # 成就
+│   │   └── AudioManager.js       # 合成音效+BGM+音量
+│   ├── utils/
+│   │   ├── SpatialGrid.js   # 碰撞查詢加速（100px）
+│   │   ├── ObjectPool.js    # 子彈物件池
+│   │   ├── GameLogger.js    # 分級日誌
+│   │   ├── DebugOverlay.js  # 除錯覆層（Ctrl+D）
+│   │   └── GameValidator.js # 硬斷言（Ctrl+Shift+V）
+│   └── renderers/
+│       ├── PlayerRenderer.js # 玩家繪製
+│       └── EnemyRenderer.js  # 敵人繪製
 ├── PRD.md              # 產品需求文件
+├── CHANGELOG.md        # 更新日誌
 └── README.md           # 專案說明
 ```
 
