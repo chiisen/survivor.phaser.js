@@ -34,3 +34,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Docs
 - `PRD.md §9` 加註實際選擇：專案已遷移至 Phaser.js 3.70，原純 Canvas 結論保留為決策歷史。
+- 開始畫面新增歷史紀錄（最高等級/存活/波次/擊殺/場次）與排行榜 TOP 5，資料來源 `StorageManager`。
