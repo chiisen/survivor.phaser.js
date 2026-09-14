@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **修復 Boss 多方向子彈同向 Bug**：`createEnemyProjectile` 誤將 `phaseDirections` 整陣列遍歷，除以當階段數量後角度重合。改為依階段數量均分圓周並以玩家方向為基準。
 - **連殺遞迴改佇列迭代**：`killEnemy` 內以 BFS 佇列處理連帶擊殺，消除深遞迴堆疊溢出風險；`checkChainKill` 保留空殼避免舊呼叫。
 - **修復結算新紀錄永不顯示**：`showGameOver` 先判定再存檔，避免存檔後比對恆為 false；重開保留難度參數；修正暫停/結算按鈕座標不一致。
+- **統一雙存檔 key**：`UIScene` 自有存檔（`survivor_js_stats`）併入 `StorageManager`（`survivor_phaser_stats`），結算不再重複寫入；舊 key 由 `migrateLegacy()` 一次性遷移後清除。
 
 ### Added
 - 結算畫面排行榜 TOP 5（左：本次/歷史，右：前5名等級/時間/擊殺）。

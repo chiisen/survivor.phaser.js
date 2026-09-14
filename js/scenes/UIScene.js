@@ -1,3 +1,5 @@
+import { StorageManager } from '../managers/StorageManager.js';
+
 export class UIScene extends Phaser.Scene {
     constructor() {
         super({ key: 'UIScene' });
@@ -148,44 +150,12 @@ export class UIScene extends Phaser.Scene {
     }
 
     loadStats() {
+        // 唯一存檔來源：StorageManager（舊 survivor_js_stats 由其一次性遷移）
+        this.storage = this.storage || new StorageManager();
         try {
-            const saved = localStorage.getItem('survivor_js_stats');
-            if (saved) {
-                this.savedStats = JSON.parse(saved);
-            } else {
-                this.savedStats = {
-                    highestLevel: 0,
-                    longestTime: 0,
-                    totalKills: 0,
-                    highestWave: 0,
-                    totalGames: 0,
-                    bossesKilled: 0
-                };
-            }
+            this.savedStats = this.storage.load();
         } catch (e) {
-            this.savedStats = {
-                highestLevel: 0,
-                longestTime: 0,
-                totalKills: 0,
-                highestWave: 0,
-                totalGames: 0,
-                bossesKilled: 0
-            };
-        }
-    }
-
-    saveStats(newStats) {
-        try {
-            this.savedStats.highestLevel = Math.max(this.savedStats.highestLevel, newStats.level);
-            this.savedStats.longestTime = Math.max(this.savedStats.longestTime, newStats.time);
-            this.savedStats.totalKills += newStats.kills;
-            this.savedStats.highestWave = Math.max(this.savedStats.highestWave, newStats.wave);
-            this.savedStats.totalGames++;
-            this.savedStats.bossesKilled += newStats.bossKills;
-
-            localStorage.setItem('survivor_js_stats', JSON.stringify(this.savedStats));
-        } catch (e) {
-            console.warn('Failed to save stats');
+            this.savedStats = this.storage.getDefaultStats();
         }
     }
 
@@ -634,13 +604,13 @@ showWaveMessage(text, color) {
         this.gameOverContainer.removeAll(true);
         this.gameOverContainer.setVisible(true);
 
-        // 先判定新紀錄再存檔（否則存檔後比對永遠為 false）
+        // 新紀錄判定（對照進場時載入的歷史；存檔由 GameScene 經 StorageManager 完成，此處僅重載顯示）
         const isNewLevel = stats.level > (this.savedStats.highestLevel || 0);
         const isNewWave = stats.wave > (this.savedStats.highestWave || 0);
         const isNewTime = stats.time > (this.savedStats.longestTime || 0);
 
-        // Save stats
-        this.saveStats(stats);
+        // Refresh from canonical storage（GameScene 結算時已寫入）
+        this.savedStats = this.storage.load();
 
         // Re-create panel elements（加寬以容納排行榜）
         const overlay = this.add.graphics();

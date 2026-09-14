@@ -6,10 +6,37 @@ export class StorageManager {
     load() {
         try {
             const data = localStorage.getItem(this.key);
-            return data ? JSON.parse(data) : this.getDefaultStats();
+            if (data) return this.withDefaults(JSON.parse(data));
+            const migrated = this.migrateLegacy();
+            if (migrated) {
+                localStorage.setItem(this.key, JSON.stringify(migrated));
+                return migrated;
+            }
+            return this.getDefaultStats();
         } catch (e) {
             console.warn('localStorage 失效', e);
             return this.getDefaultStats();
+        }
+    }
+
+    withDefaults(data) {
+        return Object.assign(this.getDefaultStats(), data);
+    }
+
+    // 一次性遷移舊 key（survivor_js_stats，UIScene 時代遺留），成功後清除舊 key
+    migrateLegacy() {
+        try {
+            const raw = localStorage.getItem('survivor_js_stats');
+            if (!raw) return null;
+            const old = JSON.parse(raw);
+            const merged = this.getDefaultStats();
+            for (const k of ['highestLevel', 'longestTime', 'totalKills', 'highestWave', 'totalGames', 'bossesKilled']) {
+                if (typeof old[k] === 'number') merged[k] = old[k];
+            }
+            localStorage.removeItem('survivor_js_stats');
+            return merged;
+        } catch (e) {
+            return null;
         }
     }
 
