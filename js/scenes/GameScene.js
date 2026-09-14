@@ -2,6 +2,14 @@ import { GAME_CONSTANTS } from '../main.js';
 import { StorageManager } from '../managers/StorageManager.js';
 import { AchievementManager } from '../managers/AchievementManager.js';
 import { DifficultyManager } from '../managers/DifficultyManager.js';
+import { AudioManager } from '../managers/AudioManager.js';
+import { ObjectPool } from '../utils/ObjectPool.js';
+import { SpatialGrid } from '../utils/SpatialGrid.js';
+import { GameLogger } from '../utils/GameLogger.js';
+import { DebugOverlay } from '../utils/DebugOverlay.js';
+import { GameValidator } from '../utils/GameValidator.js';
+import { PlayerRenderer } from '../renderers/PlayerRenderer.js';
+import { EnemyRenderer } from '../renderers/EnemyRenderer.js';
 
 export class GameScene extends Phaser.Scene {
     constructor() {
@@ -47,6 +55,11 @@ export class GameScene extends Phaser.Scene {
         this.storageManager = new StorageManager();
         this.achievementManager = new AchievementManager(this.storageManager, this);
         this.difficultyManager = new DifficultyManager(this, this.difficulty);
+        this.audio = new AudioManager();
+        this.enemyGrid = new SpatialGrid(100);
+        this.logger = new GameLogger();
+        this.debugOverlay = null;
+        this.validatorEnabled = false;
     }
 
     create() {
@@ -78,6 +91,18 @@ export class GameScene extends Phaser.Scene {
             runChildUpdate: false
         });
 
+        // 子彈物件池（經驗球/爆炸粒子附帶 Tween，不池化）
+        this.projectilePool = new ObjectPool(() => this.add.graphics(), {
+            initialSize: 30,
+            maxSize: 100,
+            onRelease: (p) => this.projectiles.remove(p)
+        });
+        this.enemyProjectilePool = new ObjectPool(() => this.add.graphics(), {
+            initialSize: 20,
+            maxSize: 50,
+            onRelease: (p) => this.enemyProjectiles.remove(p)
+        });
+
         // Create player
         this.createPlayer(width, height);
 
@@ -95,12 +120,36 @@ export class GameScene extends Phaser.Scene {
 
         // Pause input
         this.input.keyboard.on('keydown-ESC', () => this.togglePause());
-        this.input.keyboard.on('keydown-P', () => this.togglePause());
+        this.input.keyboard.on('keydown-P', (e) => { if (!e.ctrlKey && !e.shiftKey) this.togglePause(); });
         this.input.keyboard.on('keydown-Q', () => this.useUltimateSkill());
+
+        // Debug hotkeys（Ctrl+D 覆層 / Ctrl+Shift+L 日誌等級 / Ctrl+Shift+P 池統計 / Ctrl+Shift+V 斷言）
+        this.debugOverlay = new DebugOverlay(this);
+        this.debugOverlay.create();
+        this.input.keyboard.on('keydown-D', (e) => {
+            if (e.ctrlKey && !e.shiftKey) {
+                const on = this.debugOverlay.toggle();
+                this.logger.info('DebugOverlay ' + (on ? 'ON' : 'OFF'));
+            }
+        });
+        this.input.keyboard.on('keydown-L', (e) => {
+            if (e.ctrlKey && e.shiftKey) this.logger.info('Log level: ' + this.logger.cycleLevel());
+        });
+        this.input.keyboard.on('keydown-P', (e) => {
+            if (e.ctrlKey && e.shiftKey) {
+                this.logger.info('Pools:', this.projectilePool.getStats(), this.enemyProjectilePool.getStats());
+            }
+        });
+        this.input.keyboard.on('keydown-V', (e) => {
+            if (e.ctrlKey && e.shiftKey) {
+                this.validatorEnabled = !this.validatorEnabled;
+                this.logger.info('Validator ' + (this.validatorEnabled ? 'ON' : 'OFF'));
+            }
+        });
 
         this.uiScene = this.scene.get('UIScene');
 
-        this.initAudio();
+        this.audio.init(this);
 
         // 延遲顯示第一波消息（等待 UIScene 初始化完成）
         this.time.delayedCall(100, () => {
@@ -127,7 +176,7 @@ export class GameScene extends Phaser.Scene {
 
         this.cameras.main.flash(500, 0xffffff);
         this.cameras.main.shake(300, 0.02);
-        this.playSound('chainKill');
+        this.audio.playSound('chainKill');
 
         this.uiScene.showBuffNotification('⚡ Q技能釋放！', 2000);
     }
@@ -313,148 +362,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     drawPlayer(swingProgress = 0) {
-        const g = this.playerGraphics;
-        g.clear();
-
-        // Body (armor)
-        g.fillStyle(0x95a5a6, 1);
-        g.fillRoundedRect(-12, -8, 24, 28, 4);
-
-        // Armor details
-        g.fillStyle(0x7f8c8d, 1);
-        g.fillRoundedRect(-10, -6, 20, 24, 3);
-
-        // Helmet
-        g.fillStyle(0xbdc3c7, 1);
-        g.fillCircle(0, -12, 14);
-        g.fillStyle(0x95a5a6, 1);
-        g.fillCircle(0, -12, 11);
-
-        // Visor slit
-        g.fillStyle(0x2c3e50, 1);
-        g.fillRect(-6, -14, 12, 4);
-
-        // Golden gauntlets
-        g.fillStyle(0xf1c40f, 1);
-        g.fillRoundedRect(-16, 8, 8, 12, 2);
-        g.fillRoundedRect(8, 8, 8, 12, 2);
+        PlayerRenderer.drawBody(this.playerGraphics);
     }
 
     drawSword(swingAngle = 0) {
-        const g = this.swordGraphics;
-        g.clear();
-
-        // Sword position offset (held in right hand)
-        const handOffsetX = 12;
-        const handOffsetY = 10;
-
-        // Sword swing animation
-        const baseAngle = -Math.PI / 4; // -45 degrees
-        const currentAngle = baseAngle + swingAngle;
-
-        // Calculate rotated positions for sword components
-        // Use Math.cos and Math.sin to rotate points
-        const cos = Math.cos(currentAngle);
-        const sin = Math.sin(currentAngle);
-
-        // Helper function to rotate a point around origin
-        const rotatePoint = (px, py) => {
-            return {
-                x: handOffsetX + px * cos - py * sin,
-                y: handOffsetY + px * sin + py * cos
-            };
-        };
-
-        // Sword blade (blue) - draw as rotated rectangle
-        const bladeWidth = 4;
-        const bladeHeight = 35;
-        const bladeTop = rotatePoint(-bladeWidth / 2, -bladeHeight);
-        const bladeTopRight = rotatePoint(bladeWidth / 2, -bladeHeight);
-        const bladeBottomRight = rotatePoint(bladeWidth / 2, 0);
-        const bladeBottomLeft = rotatePoint(-bladeWidth / 2, 0);
-
-        g.fillStyle(0x3498db, 1);
-        g.beginPath();
-        g.moveTo(bladeTop.x, bladeTop.y);
-        g.lineTo(bladeTopRight.x, bladeTopRight.y);
-        g.lineTo(bladeBottomRight.x, bladeBottomRight.y);
-        g.lineTo(bladeBottomLeft.x, bladeBottomLeft.y);
-        g.closePath();
-        g.fillPath();
-
-        // Blade highlight
-        const highlightTop = rotatePoint(0, -34);
-        const highlightBottom = rotatePoint(0, -4);
-        g.fillStyle(0x5dade2, 1);
-        g.beginPath();
-        g.moveTo(highlightTop.x - 1, highlightTop.y);
-        g.lineTo(highlightTop.x + 1, highlightTop.y);
-        g.lineTo(highlightBottom.x + 1, highlightBottom.y);
-        g.lineTo(highlightBottom.x - 1, highlightBottom.y);
-        g.closePath();
-        g.fillPath();
-
-        // Sword hilt (gold)
-        const hiltWidth = 6;
-        const hiltHeight = 8;
-        const hiltTopLeft = rotatePoint(-hiltWidth / 2, 0);
-        const hiltTopRight = rotatePoint(hiltWidth / 2, 0);
-        const hiltBottomRight = rotatePoint(hiltWidth / 2, hiltHeight);
-        const hiltBottomLeft = rotatePoint(-hiltWidth / 2, hiltHeight);
-
-        g.fillStyle(0xf1c40f, 1);
-        g.beginPath();
-        g.moveTo(hiltTopLeft.x, hiltTopLeft.y);
-        g.lineTo(hiltTopRight.x, hiltTopRight.y);
-        g.lineTo(hiltBottomRight.x, hiltBottomRight.y);
-        g.lineTo(hiltBottomLeft.x, hiltBottomLeft.y);
-        g.closePath();
-        g.fillPath();
-
-        // Guard
-        const guardWidth = 10;
-        const guardHeight = 3;
-        const guardTopLeft = rotatePoint(-guardWidth / 2, -guardHeight);
-        const guardTopRight = rotatePoint(guardWidth / 2, -guardHeight);
-        const guardBottomRight = rotatePoint(guardWidth / 2, 0);
-        const guardBottomLeft = rotatePoint(-guardWidth / 2, 0);
-
-        g.fillStyle(0xd4ac0d, 1);
-        g.beginPath();
-        g.moveTo(guardTopLeft.x, guardTopLeft.y);
-        g.lineTo(guardTopRight.x, guardTopRight.y);
-        g.lineTo(guardBottomRight.x, guardBottomRight.y);
-        g.lineTo(guardBottomLeft.x, guardBottomLeft.y);
-        g.closePath();
-        g.fillPath();
-
-        // Sword tip glow (when swinging)
-        if (this.player && this.player.isSwinging) {
-            const tipPos = rotatePoint(0, -36);
-            g.fillStyle(0xffffff, 0.8);
-            g.fillCircle(tipPos.x, tipPos.y, 4);
-        }
-    }
-
-    initAudio() {
-        // 先初始化音量變數
-        this.masterVolume = 0.5;
-        this.sfxVolume = 0.7;
-        this.bgmVolume = 0.3;
-        this.bgmOscillator = null;
-        
-        // 初始化 AudioContext
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // 如果 AudioContext 被暫停（某些瀏覽器），等待恢復
-        if (this.audioContext.state === 'suspended') {
-            this.input.once('pointerdown', () => {
-                this.audioContext.resume();
-                this.startBGM();
-            });
-        } else {
-            this.startBGM();
-        }
+        PlayerRenderer.drawSword(this.swordGraphics, swingAngle, this.player ? this.player.isSwinging : false);
     }
 
     updateBossPhase(boss, delta) {
@@ -535,7 +447,7 @@ export class GameScene extends Phaser.Scene {
             onComplete: () => ring.destroy()
         });
         this.uiScene.showWaveMessage('⚠ BOSS 出現！', 0xe74c3c);
-        this.playSound('chainKill');
+        this.audio.playSound('chainKill');
     }
 
     showBossDeathEffect(x, y) {
@@ -560,142 +472,6 @@ export class GameScene extends Phaser.Scene {
             },
             onComplete: () => ring.destroy()
         });
-    }
-
-    playSound(type) {
-        if (!this.audioContext) return;
-
-        const oscillator = this.audioContext.createOscillator();
-        const gainNode = this.audioContext.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-
-        const volume = this.masterVolume * this.sfxVolume;
-
-        switch (type) {
-            case 'swing':
-                oscillator.type = 'square';
-                oscillator.frequency.setValueAtTime(200, this.audioContext.currentTime);
-                gainNode.gain.setValueAtTime(volume * 0.3, this.audioContext.currentTime);
-                gainNode.gain.exponentialDecayTo?.(0.01, 0.15) ||
-                    gainNode.gain.setValueAtTime(0, this.audioContext.currentTime + 0.15);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.15);
-                break;
-
-            case 'hit':
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(400, this.audioContext.currentTime);
-                gainNode.gain.setValueAtTime(volume * 0.2, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.1);
-                break;
-
-            case 'kill':
-                oscillator.type = 'square';
-                oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime);
-                oscillator.frequency.exponentialRampToValueAtTime(400, this.audioContext.currentTime + 0.3);
-                gainNode.gain.setValueAtTime(volume * 0.3, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.3);
-                break;
-
-            case 'chainKill':
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(1000, this.audioContext.currentTime);
-                oscillator.frequency.exponentialRampToValueAtTime(1500, this.audioContext.currentTime + 0.5);
-                gainNode.gain.setValueAtTime(volume * 0.4, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.5);
-                break;
-
-            case 'levelUp':
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(600, this.audioContext.currentTime);
-                oscillator.frequency.exponentialRampToValueAtTime(1800, this.audioContext.currentTime + 0.8);
-                gainNode.gain.setValueAtTime(volume * 0.5, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.8);
-                break;
-
-            case 'damage':
-                oscillator.type = 'square';
-                oscillator.frequency.setValueAtTime(150, this.audioContext.currentTime);
-                gainNode.gain.setValueAtTime(volume * 0.4, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.2);
-                break;
-
-            case 'pickup':
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(500, this.audioContext.currentTime);
-                gainNode.gain.setValueAtTime(volume * 0.15, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 0.1);
-                break;
-
-            case 'gameOver':
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(100, this.audioContext.currentTime);
-                gainNode.gain.setValueAtTime(volume * 0.5, this.audioContext.currentTime);
-                oscillator.start();
-                oscillator.stop(this.audioContext.currentTime + 1.0);
-                break;
-        }
-    }
-
-    startBGM() {
-        if (!this.audioContext || this.bgmOscillator) return;
-
-        this.bgmOscillator = this.audioContext.createOscillator();
-        const lfo = this.audioContext.createOscillator();
-        const lfoGain = this.audioContext.createGain();
-        const gainNode = this.audioContext.createGain();
-
-        this.bgmOscillator.type = 'triangle';
-        this.bgmOscillator.frequency.setValueAtTime(80, this.audioContext.currentTime);
-
-        lfo.type = 'sine';
-        lfo.frequency.setValueAtTime(0.5, this.audioContext.currentTime);
-        lfoGain.gain.setValueAtTime(20, this.audioContext.currentTime);
-
-        lfo.connect(lfoGain);
-        lfoGain.connect(this.bgmOscillator.frequency);
-
-        const volume = this.masterVolume * this.bgmVolume * 0.1;
-        gainNode.gain.setValueAtTime(volume, this.audioContext.currentTime);
-
-        this.bgmOscillator.connect(gainNode);
-        gainNode.connect(this.audioContext.destination);
-        this.bgmGainNode = gainNode;
-
-        lfo.start();
-        this.bgmOscillator.start();
-    }
-
-    adjustVolume(key, delta) {
-        const clamp = (v) => Math.min(1, Math.max(0, Math.round((v + delta) * 10) / 10));
-        if (key === 'master') this.masterVolume = clamp(this.masterVolume ?? 0.5);
-        else if (key === 'sfx') this.sfxVolume = clamp(this.sfxVolume ?? 0.7);
-        else if (key === 'bgm') this.bgmVolume = clamp(this.bgmVolume ?? 0.3);
-        if (key === 'master' || key === 'bgm') this.applyBgmVolume();
-        return key === 'master' ? this.masterVolume : key === 'sfx' ? this.sfxVolume : this.bgmVolume;
-    }
-
-    applyBgmVolume() {
-        if (this.bgmGainNode && this.audioContext) {
-            this.bgmGainNode.gain.setValueAtTime(
-                (this.masterVolume ?? 0.5) * (this.bgmVolume ?? 0.3) * 0.1,
-                this.audioContext.currentTime
-            );
-        }
-    }
-
-    stopBGM() {
-        if (this.bgmOscillator) {
-            this.bgmOscillator.stop();
-            this.bgmOscillator = null;
-        }
     }
 
     update(time, delta) {
@@ -737,6 +513,19 @@ export class GameScene extends Phaser.Scene {
             this.achievementManager.check('time', timeSec, this.difficulty);
             this.achievementManager.check('level', this.stats.level, this.difficulty);
             this.achievementManager.check('wave', this.stats.wave, this.difficulty);
+        }
+
+        // Debug 覆層與硬斷言（僅顯示新錯誤，避免洗版）
+        if (this.debugOverlay) this.debugOverlay.update(time, this.validatorEnabled);
+        if (this.validatorEnabled) {
+            this.validatorTimer = (this.validatorTimer || 0) + delta;
+            if (this.validatorTimer >= 1000) {
+                this.validatorTimer = 0;
+                const errs = GameValidator.validate(this);
+                const sig = errs.join('|');
+                if (sig && sig !== this.lastValidatorSig) this.logger.error('Validator:', errs);
+                this.lastValidatorSig = sig;
+            }
         }
     }
 
@@ -858,7 +647,7 @@ export class GameScene extends Phaser.Scene {
             // Trigger swing animation
             this.player.isSwinging = true;
             this.player.swingTimer = 150;
-            this.playSound('swing');
+            this.audio.playSound('swing');
         }
     }
 
@@ -866,8 +655,10 @@ export class GameScene extends Phaser.Scene {
         let nearest = null;
         let nearestDist = this.player.attackRange;
 
-        this.enemies.getChildren().forEach(enemy => {
-            if (!enemy.active) return;
+        // 經 SpatialGrid 縮小候選（結果集與全掃描等價）
+        const candidates = this.enemyGrid.query(this.player.x, this.player.y, this.player.attackRange);
+        for (const enemy of candidates) {
+            if (!enemy.active) continue;
 
             const dist = Phaser.Math.Distance.Between(
                 this.player.x, this.player.y,
@@ -878,7 +669,7 @@ export class GameScene extends Phaser.Scene {
                 nearestDist = dist;
                 nearest = enemy;
             }
-        });
+        }
 
         return nearest;
     }
@@ -910,7 +701,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     createProjectile(x, y, angle, isCrit = false) {
-        const projectile = this.add.graphics();
+        let projectile = this.projectilePool.acquire();
+        if (!projectile) projectile = this.add.graphics();
         projectile.x = x;
         projectile.y = y;
         projectile.direction = angle;
@@ -936,6 +728,16 @@ export class GameScene extends Phaser.Scene {
         this.projectiles.add(projectile);
     }
 
+    releaseProjectile(proj) {
+        if (proj._pooled) this.projectilePool.release(proj);
+        else proj.destroy();
+    }
+
+    releaseEnemyProjectile(proj) {
+        if (proj._pooled) this.enemyProjectilePool.release(proj);
+        else proj.destroy();
+    }
+
     updateProjectiles(delta) {
         const dt = delta / 1000;
         const bounds = {
@@ -955,7 +757,7 @@ export class GameScene extends Phaser.Scene {
             // Remove if out of bounds
             if (proj.x < bounds.left || proj.x > bounds.right ||
                 proj.y < bounds.top || proj.y > bounds.bottom) {
-                proj.destroy();
+                this.releaseProjectile(proj);
             }
         });
 
@@ -968,7 +770,7 @@ export class GameScene extends Phaser.Scene {
 
             if (proj.x < bounds.left || proj.x > bounds.right ||
                 proj.y < bounds.top || proj.y > bounds.bottom) {
-                proj.destroy();
+                this.releaseEnemyProjectile(proj);
             }
         });
     }
@@ -1049,7 +851,7 @@ export class GameScene extends Phaser.Scene {
 
         // 播放音效
         this.time.delayedCall(500, () => {
-            this.playSound('pickup');
+            this.audio.playSound('pickup');
         });
     }
 
@@ -1197,167 +999,11 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.enemies.add(enemy);
+        if (this.enemyGrid) this.enemyGrid.insert(enemy);
     }
 
     drawEnemy(graphics, type, radius) {
-        graphics.clear();
-
-        switch (type) {
-            case 'NORMAL':
-                // Red body
-                graphics.fillStyle(0xe74c3c, 1);
-                graphics.fillCircle(0, 0, radius);
-                // White eyes
-                graphics.fillStyle(0xffffff, 1);
-                graphics.fillCircle(-5, -3, 4);
-                graphics.fillCircle(5, -3, 4);
-                // Angry pupils
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-4, -2, 2);
-                graphics.fillCircle(6, -2, 2);
-                // Angry mouth
-                graphics.lineStyle(2, 0x2c3e50, 1);
-                graphics.moveTo(-5, 5);
-                graphics.lineTo(5, 5);
-                graphics.strokePath();
-                break;
-
-            case 'FAST':
-                // Green body (smaller)
-                graphics.fillStyle(0x27ae60, 1);
-                graphics.fillCircle(0, 0, radius);
-                // Horn
-                graphics.fillStyle(0x1e8449, 1);
-                graphics.fillTriangle(-4, -radius, 0, -radius - 8, 4, -radius);
-                // Eyes
-                graphics.fillStyle(0xffffff, 1);
-                graphics.fillCircle(-3, -2, 3);
-                graphics.fillCircle(3, -2, 3);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-2, -1, 1.5);
-                graphics.fillCircle(4, -1, 1.5);
-                break;
-
-            case 'TANK':
-                // Grey large body
-                graphics.fillStyle(0x7f8c8d, 1);
-                graphics.fillCircle(0, 0, radius);
-                // Outer ring
-                graphics.lineStyle(3, 0x95a5a6, 1);
-                graphics.strokeCircle(0, 0, radius - 2);
-                // Red eyes
-                graphics.fillStyle(0xe74c3c, 1);
-                graphics.fillCircle(-6, -4, 5);
-                graphics.fillCircle(6, -4, 5);
-                // Big mouth
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillEllipse(0, 6, 12, 6);
-                break;
-
-            case 'RANGED':
-                // Purple body
-                graphics.fillStyle(0x9b59b6, 1);
-                graphics.fillCircle(0, 0, radius);
-                // Circle marker on top
-                graphics.fillStyle(0x8e44ad, 1);
-                graphics.fillCircle(0, -radius + 3, 4);
-                // Yellow eyes
-                graphics.fillStyle(0xf1c40f, 1);
-                graphics.fillCircle(-4, -2, 3);
-                graphics.fillCircle(4, -2, 3);
-                // Arc mouth
-                graphics.lineStyle(2, 0x2c3e50, 1);
-                graphics.beginPath();
-                graphics.arc(0, 2, 5, 0, Math.PI, false);
-                graphics.strokePath();
-                break;
-
-            case 'ELITE':
-                graphics.fillStyle(0xf1c40f, 1);
-                graphics.fillCircle(0, 0, radius);
-                graphics.lineStyle(3, 0xf39c12, 1);
-                graphics.strokeCircle(0, 0, radius + 3);
-                graphics.fillStyle(0x3498db, 0.8);
-                graphics.strokeCircle(0, 0, radius - 2);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-4, -3, 3);
-                graphics.fillCircle(4, -3, 3);
-                graphics.lineStyle(2, 0x2c3e50, 1);
-                graphics.beginPath();
-                graphics.arc(0, 3, 4, 0, Math.PI, false);
-                graphics.strokePath();
-                break;
-
-            case 'SPLIT':
-                graphics.fillStyle(0x2ecc71, 1);
-                graphics.fillCircle(0, 0, radius);
-                graphics.fillStyle(0x27ae60, 1);
-                graphics.fillCircle(0, -radius + 2, 5);
-                graphics.fillStyle(0xffffff, 1);
-                graphics.fillCircle(-3, -2, 3);
-                graphics.fillCircle(3, -2, 3);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-2, -1, 1.5);
-                graphics.fillCircle(4, -1, 1.5);
-                break;
-
-            case 'EXPLOSIVE':
-                graphics.fillStyle(0xe67e22, 1);
-                graphics.fillCircle(0, 0, radius);
-                graphics.fillStyle(0xd35400, 1);
-                graphics.fillCircle(0, -radius + 3, 6);
-                graphics.fillStyle(0xffffff, 1);
-                graphics.fillCircle(-4, -3, 3);
-                graphics.fillCircle(4, -3, 3);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-3, -2, 1.5);
-                graphics.fillCircle(5, -2, 1.5);
-                graphics.lineStyle(2, 0x2c3e50, 1);
-                graphics.moveTo(-5, 4);
-                graphics.lineTo(5, 4);
-                graphics.strokePath();
-                break;
-
-            case 'INVISIBLE':
-                graphics.fillStyle(0x95a5a6, 1);
-                graphics.fillCircle(0, 0, radius);
-                graphics.lineStyle(2, 0x7f8c8d, 0.5);
-                graphics.strokeCircle(0, 0, radius);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-4, -3, 3);
-                graphics.fillCircle(4, -3, 3);
-                graphics.lineStyle(2, 0x2c3e50, 1);
-                graphics.moveTo(-4, 3);
-                graphics.lineTo(4, 3);
-                graphics.strokePath();
-                break;
-
-            case 'BOSS':
-                // Dark red body
-                graphics.fillStyle(0xc0392b, 1);
-                graphics.fillCircle(0, 0, radius);
-                // Crown
-                graphics.fillStyle(0xf1c40f, 1);
-                graphics.fillTriangle(-12, -radius, -6, -radius - 12, 0, -radius);
-                graphics.fillTriangle(0, -radius, 6, -radius - 12, 12, -radius);
-                graphics.fillTriangle(-6, -radius - 12, 0, -radius - 16, 6, -radius - 12);
-                // Red glow
-                graphics.lineStyle(4, 0xe74c3c, 0.5);
-                graphics.strokeCircle(0, 0, radius + 4);
-                // Angry eyes
-                graphics.fillStyle(0xf1c40f, 1);
-                graphics.fillCircle(-8, -5, 6);
-                graphics.fillCircle(8, -5, 6);
-                graphics.fillStyle(0x2c3e50, 1);
-                graphics.fillCircle(-7, -4, 3);
-                graphics.fillCircle(9, -4, 3);
-                // Unhappy mouth
-                graphics.lineStyle(3, 0x2c3e50, 1);
-                graphics.beginPath();
-                graphics.arc(0, 8, 8, Math.PI, 0, true);
-                graphics.strokePath();
-                break;
-        }
+        EnemyRenderer.draw(graphics, type, radius);
     }
 
     updateEnemyHealthBar(enemy) {
@@ -1460,7 +1106,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     createSingleEnemyProjectile(enemy, angle) {
-        const proj = this.add.graphics();
+        let proj = this.enemyProjectilePool.acquire();
+        if (!proj) proj = this.add.graphics();
         proj.x = enemy.x;
         proj.y = enemy.y;
 
@@ -1477,20 +1124,31 @@ export class GameScene extends Phaser.Scene {
     }
 
     handleCollisions() {
-        // Player projectiles vs enemies
+        // Phase 3a: 重建空間網格（碰撞查詢加速，唯讀，不改語意）
+        this.enemyGrid.clear();
+        this.enemies.getChildren().forEach(enemy => {
+            if (enemy.active) this.enemyGrid.insert(enemy);
+        });
+
+        // Player projectiles vs enemies（經 SpatialGrid 縮小候選；維持多重命中+逐敵音效原語意）
         this.projectiles.getChildren().forEach(proj => {
             if (!proj.active) return;
 
-            this.enemies.getChildren().forEach(enemy => {
-                if (!enemy.active) return;
+            let released = false;
+            const candidates = this.enemyGrid.query(proj.x, proj.y, 120);
+            for (const enemy of candidates) {
+                if (!enemy.active) continue;
 
                 const dist = Phaser.Math.Distance.Between(proj.x, proj.y, enemy.x, enemy.y);
                 if (dist < enemy.radius + 6) {
                     this.damageEnemy(enemy, proj.damage);
-                    proj.destroy();
-                    this.playSound('hit');
+                    if (!released) {
+                        this.releaseProjectile(proj);
+                        released = true;
+                    }
+                    this.audio.playSound('hit');
                 }
-            });
+            }
         });
 
         // Enemy projectiles vs player
@@ -1500,7 +1158,7 @@ export class GameScene extends Phaser.Scene {
             const dist = Phaser.Math.Distance.Between(proj.x, proj.y, this.player.x, this.player.y);
             if (dist < 20) {
                 this.damagePlayer(proj.damage);
-                proj.destroy();
+                this.releaseEnemyProjectile(proj);
             }
         });
 
@@ -1530,7 +1188,7 @@ export class GameScene extends Phaser.Scene {
             if (dist < 15) {
                 this.collectExp(orb.value);
                 orb.destroy();
-                this.playSound('pickup');
+                this.audio.playSound('pickup');
             }
         });
     }
@@ -1634,12 +1292,11 @@ export class GameScene extends Phaser.Scene {
                 this.player.hp = Math.min(this.player.hp + this.player.vampire, this.player.maxHp);
             }
 
-            this.playSound('kill');
+            this.audio.playSound('kill');
             totalKilled++;
 
             // 收集範圍內連帶目標（分裂鏈：SPLIT 額外用 80px 範圍觸發同類鏈式分裂）
-            const scanRange = cur.type === 'SPLIT' ? 80 : chainRange;
-            const children = this.enemies.getChildren().slice();
+            const children = this.enemyGrid.query(cur.x, cur.y, 80);
             for (const other of children) {
                 if (!other || !other.active || other._chainQueued || other === cur) continue;
                 // SPLIT 鏈式分裂只連帶同類，其餘連殺維持原 40px 規則
@@ -1691,6 +1348,7 @@ export class GameScene extends Phaser.Scene {
             miniEnemy.graphics = graphics;
 
             this.enemies.add(miniEnemy);
+            if (this.enemyGrid) this.enemyGrid.insert(miniEnemy);
         }
 
         this.showSplitEffect(enemy.x, enemy.y);
@@ -1756,7 +1414,7 @@ export class GameScene extends Phaser.Scene {
         // Show buff notification
         this.uiScene.showBuffNotification('⚡ 連殺！攻擊速度 +30%', GAME_CONSTANTS.CHAIN_KILL.BUFF_DURATION);
 
-        this.playSound('chainKill');
+        this.audio.playSound('chainKill');
     }
 
     showChainKillDisplay(count) {
@@ -1919,7 +1577,7 @@ export class GameScene extends Phaser.Scene {
         this.uiScene.showBuffNotification('✨ 魔力增幅 +1\n❤️ HP +10%', 2000);
 
         this.isLevelUp = true;
-        this.playSound('levelUp');
+        this.audio.playSound('levelUp');
 
         // Show talent selection
         this.showTalentSelection();
@@ -2050,7 +1708,7 @@ export class GameScene extends Phaser.Scene {
             this.playerGraphics.fillRoundedRect(-12, -8, 24, 28, 4);
             this.time.delayedCall(100, () => this.drawPlayer(0));
 
-            this.playSound('damage');
+            this.audio.playSound('damage');
         }
 
         this.updateUI();
@@ -2085,8 +1743,8 @@ export class GameScene extends Phaser.Scene {
 
     gameOver() {
         this.isGameOver = true;
-        this.stopBGM();
-        this.playSound('gameOver');
+        this.audio.stopBGM();
+        this.audio.playSound('gameOver');
 
         const stats = {
             level: this.stats.level,

@@ -453,8 +453,8 @@ showWaveMessage(text, color) {
 
     adjustVolume(key, delta) {
         const gameScene = this.scene.get('GameScene');
-        if (!gameScene || typeof gameScene.adjustVolume !== 'function') return;
-        const v = gameScene.adjustVolume(key, delta);
+        if (!gameScene || !gameScene.audio || typeof gameScene.audio.adjustVolume !== 'function') return;
+        const v = gameScene.audio.adjustVolume(key, delta);
         if (this.volumeLabels && this.volumeLabels[key]) {
             this.volumeLabels[key].setText(Math.round(v * 100) + '%');
         }
@@ -463,9 +463,9 @@ showWaveMessage(text, color) {
     showPauseScreen() {
         const gameScene = this.scene.get('GameScene');
         if (gameScene && this.volumeLabels) {
-            if (this.volumeLabels.master) this.volumeLabels.master.setText(Math.round((gameScene.masterVolume ?? 0.5) * 100) + '%');
-            if (this.volumeLabels.sfx) this.volumeLabels.sfx.setText(Math.round((gameScene.sfxVolume ?? 0.7) * 100) + '%');
-            if (this.volumeLabels.bgm) this.volumeLabels.bgm.setText(Math.round((gameScene.bgmVolume ?? 0.3) * 100) + '%');
+            if (this.volumeLabels.master) this.volumeLabels.master.setText(Math.round((gameScene.audio.masterVolume ?? 0.5) * 100) + '%');
+            if (this.volumeLabels.sfx) this.volumeLabels.sfx.setText(Math.round((gameScene.audio.sfxVolume ?? 0.7) * 100) + '%');
+            if (this.volumeLabels.bgm) this.volumeLabels.bgm.setText(Math.round((gameScene.audio.bgmVolume ?? 0.3) * 100) + '%');
         }
         this.pauseContainer.setVisible(true);
     }

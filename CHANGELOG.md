@@ -21,3 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 暫停畫面音量調整（主音量/音效/背景 ±10%，BGM 即時生效）。
 - 成就即時觸發：擊殺/Boss/等級/波次/存活時間於遊戲中即時檢查，結算補 `games` 次數。
 - 分裂敵人 80px 同類鏈式分裂；Boss 出場紅金雙環+震動+警告、死亡多重爆炸+金環擴散。
+
+### Refactored
+- 新增 `js/constants.js` 收容遊戲常數，`main.js` 改為轉出口（既有引用零修改）。
+- 新增 `js/managers/AudioManager.js` 接管音效/BGM/音量，`GameScene`/`UIScene` 改為委派。
+- 新增 `js/utils/ObjectPool.js`（子彈池化，附 Tween 物件不池化）與 `js/utils/SpatialGrid.js`（100px 網格，碰撞/索敵/連殺查詢加速，唯讀不改語意，維持多重命中原行為）。
+- 新增 `js/utils/GameLogger.js`（Ctrl+Shift+L 切換等級）、`js/utils/DebugOverlay.js`（Ctrl+D：FPS/記憶體/實體/網格/冷卻/池統計+自動警告）、`js/utils/GameValidator.js`（Ctrl+Shift+V 硬斷言）；Ctrl+Shift+P 輸出池統計。
+- 新增 `js/renderers/PlayerRenderer.js` 與 `js/renderers/EnemyRenderer.js`（純繪製函式逐字搬移），`GameScene` 縮減約 340 行。
