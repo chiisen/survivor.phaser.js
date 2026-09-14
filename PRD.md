@@ -339,12 +339,11 @@
 
 ---
 
-#### 本專案選擇「純 Canvas API」的原因
+#### 本專案實際選擇（更新：以 Phaser.js 實作）
 
-根據專案願景：
-> 「打造一個輕量化、純 JavaScript 髸動的類倖存者網頁遊戲 Demo」
+> ⚠️ 以下「純 Canvas」結論為早期決策歷史，僅供參考。專案實作已遷移至 **Phaser.js 3.70**（見 `README.md` 技術架構）：系統膨脹至 9 種敵人、Boss 多階段、護盾/暴擊/成就/排行榜後，手刻 Physics/粒子/音效的維護成本已超過引擎體積成本；原 PRD 規範要求的 SpatialGrid、ObjectPool、GameLogger、DebugOverlay、GameValidator 已在 Phaser 之上補回（見 `CHANGELOG.md`）。上表引擎對比保留作為決策歷史。
 
-選擇純 Canvas API 的理由：
+當初選擇純 Canvas API 的理由（歷史紀錄）：
 
 1. **符合「輕量化」需求**
    -無額外依賴（Phaser.js ~1MB、PixiJS ~250KB）

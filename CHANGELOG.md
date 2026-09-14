@@ -28,3 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 新增 `js/utils/ObjectPool.js`（子彈池化，附 Tween 物件不池化）與 `js/utils/SpatialGrid.js`（100px 網格，碰撞/索敵/連殺查詢加速，唯讀不改語意，維持多重命中原行為）。
 - 新增 `js/utils/GameLogger.js`（Ctrl+Shift+L 切換等級）、`js/utils/DebugOverlay.js`（Ctrl+D：FPS/記憶體/實體/網格/冷卻/池統計+自動警告）、`js/utils/GameValidator.js`（Ctrl+Shift+V 硬斷言）；Ctrl+Shift+P 輸出池統計。
 - 新增 `js/renderers/PlayerRenderer.js` 與 `js/renderers/EnemyRenderer.js`（純繪製函式逐字搬移），`GameScene` 縮減約 340 行。
+
+### Removed
+- 刪除過期 `index-standalone.html`（舊 5 敵人單檔快照，與模組版脫鉤且曾重複同類 Bug），以 `index.html` 模組版為唯一入口。
+
+### Docs
+- `PRD.md §9` 加註實際選擇：專案已遷移至 Phaser.js 3.70，原純 Canvas 結論保留為決策歷史。
